@@ -1,6 +1,7 @@
 # Rainfall_map_longterm
 Mapping annual and long-term monthly rainfall
 <br>
+<p>Data credit: <a href = "https://www.water.gov.my/">JPS/DID</a></p>
 <h3>Annual rainfall from 1980-2019</h3>
 <img src="https://github.com/ycgoh-nahrim/Rainfall_map_longterm/blob/main/Klang_RF_annual_lgc3.jpg" alt="Annual rainfall from 1980-2019">
 <br>
