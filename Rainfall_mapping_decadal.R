@@ -10,12 +10,12 @@ library(data.table)
 options(stringsAsFactors = FALSE)
 
 #set working directory
-setwd('D:/gyc/2025/20250312_Nota_Jemaah_Menteri/Analysis/Rainfall')
+setwd('D:/gyc/2025/20250312_Nota_Jemaah_Menteri/Analysis/Rainfall/Decadal')
 
 
 #import data
-RF_data = read.csv("D:/gyc/2025/20211221_Banjir_2021/Analysis/Aquarius1h_202404_KLSel/Aq_RF_1h_KLSel_yr_full.csv", 
-                   header = T, sep = ",")
+#RF_data = read.csv("D:/gyc/2025/20211221_Banjir_2021/Analysis/Aquarius1h_202404_KLSel/Aq_RF_1h_KLSel_yr_full.csv", 
+#                   header = T, sep = ",")
 
 RF_data <- fread(file="D:/gyc/2025/20211221_Banjir_2021/Analysis/Aquarius1h_202404_KLSel/Aq_RF_1h_KLSel_yr_full.csv",
                    header = TRUE, sep=",", stringsAsFactors = F)
@@ -23,6 +23,13 @@ RF_data <- fread(file="D:/gyc/2025/20211221_Banjir_2021/Analysis/Aquarius1h_2024
 #set format
 str(RF_data)
 RF_data$Datetime <- as.POSIXct(RF_data$Datetime, format = "%Y-%m-%d %H:%M")
+
+
+
+# data information
+
+reg_name_full <- "Selangor - Kuala Lumpur - Putrajaya"
+reg_name_short <- "KLSel"
 
 
 ###########################
@@ -128,17 +135,18 @@ decade_list <- decade_list[order(decade_list$start_year, decreasing = F), ]
 
 #############
 ## station list
-stn_list <- as.data.frame(unique(RF_mth_avg$Stn_no))
+stn_list <- as.data.frame(unique(RF_decadal_avg$Stn_no))
 
 
 # CHECK OUTLIERS
 ## annual rainfall CHART
 
-min(RF_yr$Year)
-max(RF_yr$Year)
+## get max and min years
+yr_min <- min(RF_yr_full$Year)
+yr_max <- max(RF_yr_full$Year)
 
 
-gg_rainfall <- RF_yr %>% 
+gg_rainfall <- RF_yr_full %>% 
   ggplot(aes(x = Year, y = Depth_yr)) +
   geom_point(aes(shape = ".", alpha = 0.5, color = Stn_no), na.rm = T) +
   theme_bw(base_size = 10) +
@@ -155,7 +163,7 @@ gg_rainfall <- RF_yr %>%
         panel.grid.major.x = element_blank(),
         legend.position = "none",
         axis.text.x = element_text(angle = 0, hjust = 0.5)) +
-  labs(title = "Annual Rainfall (Kuala Lumpur - Selangor)")
+  labs(title = paste0("Annual Rainfall (", reg_name_full, ")"))
 
 gg_rainfall
 
@@ -165,7 +173,7 @@ ggplotly(gg_rainfall, #tooltip = "text",
   rangeslider()
 
 #print last plot to file
-ggsave(paste0("KLSel_rainfall_yr_scatter.jpg"), dpi = 300,
+ggsave(paste0(reg_name_short, "_rainfall_yr_scatter.jpg"), dpi = 300,
        width = 8, height = 5, units = "in")
 
 
@@ -313,14 +321,19 @@ map
 
 
 
-# INTERPOLATE (one day first)
+# INTERPOLATE (average all years)
 
 # subset 
-RF_data_sely <- RF_yr %>% 
-  filter(Year == "2019")
+#RF_data_sely <- RF_yr %>% 
+#  filter(Year == "2019")
+
+
+# check max
+max(RF_yr_avg$Depth_yr_avg)
+
 
 # join data
-RF_sely <- RF_data_sely %>% 
+RF_sely <- RF_yr_avg %>% 
   merge(RF_stn, by = "Stn_no")
 
 str(RF_sely)
@@ -342,7 +355,7 @@ crs(sf_sely)
 
 ## Nearest Neighbour
 fit_NN <- gstat::gstat( # using package {gstat} 
-  formula = Depth_yr ~ 1,    # The column  we are interested in
+  formula = Depth_yr_avg ~ 1,    # The column  we are interested in
   data = as(sf_sely, "Spatial"), # using {sf} and converting to {sp}, which is expected
   nmax = 10, nmin = 3 # Number of neighboring observations used for the fit
 )
@@ -354,10 +367,10 @@ plot(sely_NN_mask)
 
 # Inverse Distance Weighting
 fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
-  formula = Depth_yr ~ 1,
-  locations = sf_sely,
+  formula = Depth_yr_avg ~ 1,   #param to be interpolated
+  locations = sf_sely,            #input data
   nmax = 10, nmin = 3,
-  set = list(idp = 0.5) # inverse distance power
+  set = list(idp = 2) # inverse distance power, adjust as needed (default: 0.5, rainfall usually 2)
 )
 sely_IDW <- interpolate(ras_interp_template, fit_IDW)
 plot(sely_IDW)
@@ -388,8 +401,8 @@ map_rf_sely <- ggplot() +
   theme(legend.title = element_text(size = 11), 
         legend.text = element_text(size = 11)) +
   
-  labs(title="Annual Rainfall Distribution",
-       subtitle = "2019") +
+  labs(title = "Average Annual Rainfall Distribution",
+       subtitle = paste0("(", yr_min, "-", yr_max, ")")) +
   coord_sf(xlim=c(100.5, 102), ylim=c(2.5, 3.9)) +
   guides(fill = guide_colorbar(label.position = "right", title.hjust = 0.9, 
                                barwidth = unit(1, "lines"), barheight = unit(10, "lines")))
@@ -397,7 +410,7 @@ map_rf_sely <- ggplot() +
 map_rf_sely
 
 #print last plot to file
-ggsave(paste0("KLSel_rainfall_y2019-1.jpg"), dpi = 300,
+ggsave(paste0(reg_name_short, "_rainfall_yr_avg.jpg"), dpi = 300,
        width = 6, height = 5, units = "in")
 
 
@@ -459,6 +472,7 @@ plot(sf_rf_all)
 # SEPARATE INTERPOLATION AND MAPPING
 
 # produce interpolation raster only (without map)
+
 i = 1
 
 interp_list = list() #for combination
@@ -490,7 +504,7 @@ for (i in 1:(nrow(decade_list))) {
     formula = Depth_avg ~ 1,
     locations = sf_rf_decadal,
     nmax = 10, nmin = 3,
-    set = list(idp = 0.5) # inverse distance power
+    set = list(idp = 2) # inverse distance power
   )
   decadal_IDW <- interpolate(ras_interp_template, fit_IDW)
   decadal_IDW_mask <- mask(decadal_IDW, mask = sel_shp2)
@@ -534,7 +548,7 @@ low_limit <- min(col_brk)
 ## map
 
 #########
-### single map - single year
+### single map - average all years
 
 map_cl_sely <- ggplot() +
   geom_raster(data = as.data.frame(sely_IDW_mask, xy=TRUE, na.rm = TRUE), 
@@ -555,8 +569,8 @@ map_cl_sely <- ggplot() +
         legend.title = element_text(size = 10), 
         legend.position = "bottom",
         legend.text = element_text(size = 6)) +
-  labs(title = paste0("Klang Basin Annual Rainfall Distribution"),
-       subtitle = "2019") +
+  labs(title = paste0(reg_name_full, " Average Annual Rainfall Distribution"),
+       subtitle = paste0("(", yr_min, "-", yr_max, ")")) +
   coord_sf(xlim=c(100.5, 102), ylim=c(2.5, 3.9)) +
   guides(fill = guide_colorbar(label.position = "bottom", title.hjust = 0.9, 
                                barwidth = unit(20, "lines"), barheight = unit(0.5, "lines")))
@@ -564,7 +578,7 @@ map_cl_sely <- ggplot() +
 map_cl_sely
 
 #print last plot to file
-ggsave(paste0("KLSel_RF_2019_lgc2.jpg"), dpi = 300,
+ggsave(paste0(reg_name_short, "_RF_yr_avg_lgc.jpg"), dpi = 300,
        width = 6, height = 4, units = "in")
 
 
@@ -574,7 +588,7 @@ ggsave(paste0("KLSel_RF_2019_lgc2.jpg"), dpi = 300,
 
 ### produce multiple maps from interpolation raster
 
-maplist_cl <- list()
+maplist <- list()
 
 m = 1
 
@@ -585,7 +599,7 @@ for (m in 1:length(interp_list)) {
     filter(Decade == sel_yr)
   
   # plot map
-  annual_IDW_map_cl <- ggplot() +
+  decadal_IDW_map <- ggplot() +
     geom_raster(data = as.data.frame(interp_list[[m]], xy=TRUE, na.rm = TRUE), 
                 aes(x = x, y = y, fill = var1.pred)) +
     scale_fill_stepsn(name = "Rainfall (mm)",
@@ -606,7 +620,7 @@ for (m in 1:length(interp_list)) {
   
   
   #counter <- counter + 1
-  maplist_cl[[m]] <- annual_IDW_map_cl
+  maplist[[m]] <- decadal_IDW_map
   #rainfall_stack[[counter]] <- daily_IDW_mask
   
 }
@@ -629,17 +643,17 @@ g_legend<-function(a.gplot){
 
 
 
-
-
 mylegend_cl <- g_legend(map_cl_sely)
 
 
 # arrange layout
 
-facet_map_cl <- grid.arrange(grobs = maplist_cl[1:6], ncol = 3)
+facet_map_cl <- grid.arrange(grobs = maplist[1:6], ncol = 3)
+facet_map_cl <- grid.arrange(grobs = maplist, ncol = 3)
+
 
 #### title font format
-title2 = grid::textGrob(paste0('Kuala Lumpur - Selangor Decadal Average Annual Rainfall\n'), 
+title2 = grid::textGrob(paste0(reg_name_full, " Decadal Annual Rainfall (", yr_min, "-", yr_max,")\n"),  
                         gp = grid::gpar(fontsize = 14))
 
 
@@ -652,8 +666,13 @@ facet_legend_map_cl <- grid.arrange(facet_map_cl, mylegend_cl,
 )
 
 #### print last plot to file
-ggsave(paste0("KLSel_RF_decadal_lgc2_nn.jpg"), facet_legend_map_cl, dpi = 400,
-       width = 17, height = 10, units = "in")
+## widescreen
+ggsave(paste0(reg_name_short, "_RF_decadal_lgc3.jpg"), facet_legend_map_cl, dpi = 400,
+       width = 20, height = 11.25, units = "in")
+
+## A3
+ggsave(paste0(reg_name_short, "_RF_decadal_lgc3_a3.jpg"), facet_legend_map_cl, dpi = 400,
+       width = 20, height = 14.19, units = "in")
 
 
 
@@ -665,9 +684,8 @@ facet_legend_map_cl2 <- grid.arrange(facet_map_cl, map_cl_avg, #mylegend_cl,
 )
 
 #### print last plot to file
-ggsave(paste0("KelSel_RF_decadal_avg_lgc1.jpg"), facet_legend_map_cl2, dpi = 400,
-       width = 18, height = 10, units = "in")
-
+ggsave(paste0(reg_name_short, "_RF_decadal_avg_lgc3.jpg"), facet_legend_map_cl2, dpi = 400,
+       width = 20, height = 11.25, units = "in")
 
 
 #########################
@@ -687,7 +705,3 @@ saveGIF({
   }
   
 }, movie.name = 'animation.gif', interval = 0.2, ani.width = 700, ani.height = 600)
-
-
-
-
