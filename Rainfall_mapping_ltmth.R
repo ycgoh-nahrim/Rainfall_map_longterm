@@ -4,27 +4,116 @@
 library(tidyverse)
 library(lubridate)
 library(plotly)
+library(data.table)
+
 
 # set strings as factors to false
 options(stringsAsFactors = FALSE)
 
 #set working directory
-setwd('J:/Backup_main/Main/20170206_SBAK/Analysis/hydrology/rainfall_mth')
+setwd('D:/gyc/2025/20250312_Nota_Jemaah_Menteri/Analysis/Rainfall/Monthly')
 
 
 #import data
-RF_data = read.csv("LTMthly.csv", header = T, sep = ",")
+RF_data <- fread(file="D:/gyc/2025/20211221_Banjir_2021/Analysis/Aquarius1h_202404_KLSel/Aq_RF_1h_KLSel_yr_full.csv",
+                 header = TRUE, sep=",", stringsAsFactors = F)
 
 #set format
 str(RF_data)
-#RF_data$Datetime <- as.POSIXct(RF_data$Datetime, format = "%Y-%m-%d %H:%M")
+RF_data$Datetime <- as.POSIXct(RF_data$Datetime, format = "%Y-%m-%d %H:%M")
+
+
+
+# data information
+
+reg_name_full <- "Selangor - Kuala Lumpur - Putrajaya"
+reg_name_short <- "KLSel"
+
+
+###########################
+# DATA AGGREGATION
+#add a date & year column to data table
+setDT(RF_data)[, Date:= date(Datetime) ]
+setDT(RF_data)[, Month:= month(Datetime) ]
+setDT(RF_data)[, Year:= year(Datetime) ]
+
+str(RF_data)
+
+
+## DAILY
+
+RF_day <- RF_data[,.(Depth_day = sum(Depth, na.rm = T), cnt = sum(!is.na(Depth))), 
+                  by = c("Stn_no", "Date")]
+
+min(RF_day$cnt)
+
+setDT(RF_day)[, Month:= month(Date) ]
+setDT(RF_day)[, Year:= year(Date) ]
+
+
+## MONTHLY
+
+### from hourly data
+RF_mth <- RF_data[,.(Depth_mth = sum(Depth, na.rm = T), cnt = sum(!is.na(Depth))), 
+                  by = c("Stn_no", "Year", "Month")]
+
+min(RF_mth$cnt) # 24*28=672
+
+
+### from daily data
+RF_mth <- RF_day[,.(Depth_mth = sum(Depth_day, na.rm = T), cnt = sum(!is.na(Depth_day))), 
+                 by = c("Stn_no", "Year", "Month")]
+
+min(RF_mth$cnt) # 28
+
+RF_mth_full <- RF_mth[cnt > 27,] 
+
+min(RF_mth_full$cnt)
+
+
+
+## YEARLY
+
+### from hourly data
+RF_yr <- RF_data[,.(Depth_yr = sum(Depth, na.rm = T), cnt = sum(!is.na(Depth))), 
+                 by = c("Stn_no", "Year")]
+
+min(RF_yr$cnt) #24*365=8760, 8760*0.95=8322
+
+
+### from daily data
+RF_yr <- RF_day[,.(Depth_yr = sum(Depth_day, na.rm = T), cnt = sum(!is.na(Depth_day))), 
+                by = c("Stn_no", "Year")]
+
+
+min(RF_yr$cnt) # 365*0.95=346
+
+RF_yr_full <- RF_yr[cnt > 346,] 
+
+
+#############
+# AVERAGED
+
+## MONTHLY
+RF_mth_avg <- RF_mth_full[,.(Depth_mth_avg = mean(Depth_mth, na.rm = T)), 
+                          by = c("Stn_no", "Month")]
+
+yr_max <- max(RF_mth_full$Year)
+yr_min <- min(RF_mth_full$Year)
+
+
+#############
+## station list
+stn_list <- as.data.frame(unique(RF_mth_avg$Stn_no))
+
+
 
 
 # CHECK OUTLIERS
-## monthly rainfall CHART
 
-gg_rainfall <- RF_data %>% 
-  ggplot(aes(x = Month, y = mth_Depth)) +
+
+gg_rainfall <- RF_mth_avg %>% 
+  ggplot(aes(x = Month, y = Depth_mth_avg)) +
   geom_point(aes(shape = ".", alpha = 0.5, color = Stn_no), na.rm = T) +
   theme_bw(base_size = 10) +
   scale_x_continuous(name="Month", 
@@ -40,7 +129,7 @@ gg_rainfall <- RF_data %>%
         panel.grid.major.x = element_blank(),
         legend.position = "none",
         axis.text.x = element_text(angle = 0, hjust = 0.5)) +
-  labs(title = "Monthly Rainfall")
+  labs(title = paste0("Monthly Rainfall (", reg_name_full, ")"))
 
 gg_rainfall
 
@@ -49,8 +138,9 @@ ggplotly(gg_rainfall, #tooltip = "text",
          dynamicTicks = TRUE) %>% 
   rangeslider()
 
+
 #print last plot to file
-ggsave(paste0("Klang_RF_mth_chart.jpg"), dpi = 300,
+ggsave(paste0(reg_name_short, "_rainfall_mth_scatter.jpg"), dpi = 300,
        width = 8, height = 5, units = "in")
 
 
@@ -60,7 +150,7 @@ ggsave(paste0("Klang_RF_mth_chart.jpg"), dpi = 300,
 library(sf) # processing spatial vector data
 library(sp) # another vector data package necessary for continuity
 library(raster) # processing spatial raster data. !!!overwrites dplyr::select!!!
-library(rgdal) # read shapefile
+#library(rgdal) # read shapefile
 library(mapproj)
 library(tmap) # animation
 
@@ -78,7 +168,7 @@ library(automap)# Automatic approach to Kriging
 
 # import coordinate data
 
-RF_stn = read.csv("RF_Klang_annual_lt.csv", header = T, sep = ",")
+RF_stn = read.csv("D:/gyc/2025/20250312_Nota_Jemaah_Menteri/GIS/shp/TIDEDA_RF_stn_KLSel2.csv", header = T, sep = ",")
 
 str(RF_stn)
 
@@ -86,42 +176,129 @@ str(RF_stn)
 # map country and coordinate data
 
 ## shapefile
-klang_shp <- readOGR("J:/Backup_main/Main/20170206_SBAK/GIS/shp/jsb_basin_Klang.shp",
-                  stringsAsFactors = F)
+#klang_shp <- readOGR("D:/gyc/Main/20170206_SBAK/GIS/shp/jsb_basin_Klang.shp",
+#                  stringsAsFactors = F)
 
-sel_shp <- readOGR("J:/Backup_main/Main/20170206_SBAK/GIS/shp_DBKL/Boundary_WPKL.shp",
-                  stringsAsFactors = F)
 
+#sel_shp <- readOGR("D:/gyc/2025/20211221_Banjir_2021/GIS/shp/BoundaryKLSel.shp",
+#                   stringsAsFactors = F)
+
+
+pm_shp <- st_read("D:/GIS_data/Boundary/state/state_pmsia_short.shp")
+
+
+sel_shp <- subset(pm_shp, STATE %in% c("Selangor", "Kuala Lumpur"))
+
+
+## basin
+
+all_basin_shp <- st_read("D:/GIS_data/DATA_SG_BASIN/Jica_subbasin/jsb_semm_merge4.shp")
+
+
+basin_shp <- subset(all_basin_shp, BASINNAME %in% c("Selangor", "Klang", "Langat", 
+                                                    "Tengi", "Buloh", "Sepang", "Bernam"))
+
+
+# check projection
 
 crs(sel_shp)
 
-crs(klang_shp)
+crs(basin_shp)
+
 
 ### change projection to WGS84 (original Kertau)
 #klang_shp2 <-spTransform(klang_shp, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
-sel_shp2 <-spTransform(sel_shp, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+
+pm_shp2 <-st_transform(pm_shp, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+sel_shp2 <-st_transform(sel_shp, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+basin_shp2 <-st_transform(basin_shp, CRS("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+
+
+crs(pm_shp2)
 
 crs(sel_shp2)
 
+crs(basin_shp2)
 
-# layout map
+
+# FIND INTERSECTING BASIN
+
+## make sure same crs
+st_crs(sel_shp2) == st_crs(basin_shp2)
+
+
+# invalid geometry
+## check for invalid geometry
+sf::st_is_valid(basin_shp2)
+## option 1: repair invalid geometry
+basin_shp3 <- st_make_valid(basin_shp2)
+## option 2: buffer to repair geometry
+basin_shp3 <- st_buffer(basin_shp2, 0)
+## recheck geometry
+sf::st_is_valid(basin_shp3)
+
+
+
+## apply intersection
+basin_sel_shp <- st_intersection(st_as_sf(pm_shp2), st_as_sf(basin_shp3))
+
+
+## calculate area
+basin_sel_shp$area <- st_area(basin_sel_shp)
+
+
+## filter polygon fragments
+### by area
+#basin_sel_shp2 <- basin_sel_shp %>% 
+#  filter(area > units::set_units(150000000, m^2))
+### by state
+basin_sel_shp2 <- basin_sel_shp %>% 
+  filter(STATE %in% c("Selangor", "Kuala Lumpur"))
+
+## convert to SpatialPolygonsDataFrame 
+basin_sel_shp2 <- as_Spatial(basin_sel_shp2)
+
+## dissolve polygons back to basins (merge to basins)
+basin_sel_shp2 <- aggregate(basin_sel_shp2, by = "BASINNAME")
+
+class(basin_sel_shp2)
+
+## convert SpatialPolygonsDataFrame to sf to plot with geom_sf
+basin_sel_shp3 <- st_as_sf(basin_sel_shp2)
+
+class(basin_sel_shp3)
+
+
+
+# LAYOUT MAP
 
 map <- ggplot() + 
-  geom_polygon(data = klang_shp, aes(x = long, y = lat, group = group), 
-               fill = "grey", alpha = 0.3, colour = "white") +
+  geom_sf(data = pm_shp2, fill = "grey", alpha = 0.3, colour = "white") +
+  geom_sf(data = sel_shp2, fill = "orange", alpha = 0.3, colour = "white") +
+  geom_sf(data = basin_sel_shp3, fill = NA, alpha = 0.3, colour = "steelblue3") +
   geom_point(data = RF_stn, aes(x = Long, y = Lat),
-              color = 'red', size = 1, alpha = 0.5) +
-  coord_map(xlim=c(101.1, 102), ylim=c(2.8, 3.4)) +
+             color = 'black', size = 1, alpha = 0.5) +
+  #geom_point(data = banjir, aes(x = Long, y = Lat),
+  #           color = 'red', size = 1, alpha = 0.5) +
+  coord_sf(xlim=c(100.5, 102), ylim=c(2.5, 3.9)) +
   theme_void()
+
 
 map
 
 
-# INTERPOLATE (one day first)
+# INTERPOLATE (one month first)
+
+# choose month
+mth_name <- "November"
+mth_no <- "11"
+
 
 # subset 
-RF_data_m12 <- RF_data %>% 
-  filter(Month == "12")
+RF_data_m12 <- RF_mth_avg %>% 
+  filter(Month == mth_no)
+
+
 
 # join data
 RF_m12 <- RF_data_m12 %>% 
@@ -135,7 +312,7 @@ plot(sf_m12)
 
 
 # create raster template
-ras_interp_template <- raster(klang_shp, res = 0.001)
+ras_interp_template <- raster(sel_shp2, res = 0.001)
 
 # make sure same projection
 crs(ras_interp_template)
@@ -146,26 +323,26 @@ crs(sf_m12)
 
 ## Nearest Neighbour
 fit_NN <- gstat::gstat( # using package {gstat} 
-  formula = mth_Depth ~ 1,    # The column  we are interested in
+  formula = Depth_mth_avg ~ 1,    # The column  we are interested in
   data = as(sf_m12, "Spatial"), # using {sf} and converting to {sp}, which is expected
   nmax = 10, nmin = 3 # Number of neighboring observations used for the fit
 )
 m12_NN <- interpolate(ras_interp_template, fit_NN)
 plot(m12_NN)
-m12_NN_mask <- mask(m12_NN, mask = klang_shp)
+m12_NN_mask <- mask(m12_NN, mask = sel_shp2)
 plot(m12_NN_mask)
 
 
 # Inverse Distance Weighting
 fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
-  formula = mth_Depth ~ 1,
-  locations = sf_m12,
+  formula = Depth_mth_avg ~ 1,   #param to be interpolated
+  locations = sf_m12,            #input data
   nmax = 10, nmin = 3,
-  set = list(idp = 0.5) # inverse distance power
+  set = list(idp = 2) # inverse distance power, adjust as needed (default: 0.5, rainfall usually 2)
 )
 m12_IDW <- interpolate(ras_interp_template, fit_IDW)
 plot(m12_IDW)
-m12_IDW_mask <- mask(m12_IDW, mask = klang_shp)
+m12_IDW_mask <- mask(m12_IDW, mask = sel_shp2)
 plot(m12_IDW_mask)
 
 class(m12_IDW_mask)
@@ -174,7 +351,7 @@ class(m12_IDW_mask)
 ## overlay map
 
 map_rf_m12 <- ggplot() +
-  geom_raster(data = as.data.frame(m12_IDW_mask, xy=TRUE, na.rm = TRUE), 
+  geom_raster(data = as.data.frame(m12_IDW_mask, xy = TRUE, na.rm = TRUE), 
               aes(x = x, y = y, fill = var1.pred)) +
   #scale_fill_gradientn(name="Rainfall (mm)", 
   #                     colors = c("#ffffcf", "#6fc4ad", "#1d7eb3", "#1a4998", "purple4"),
@@ -184,25 +361,29 @@ map_rf_m12 <- ggplot() +
                        palette = "Spectral", direction = 1,
                        #na.value = "purple",
                        oob = scales::squish, # squish out of bound values to nearest extreme
-                       breaks = seq(0, 350, by = 50),
-                       limits = c(0, 350)) + # set fixed legend) +
-  geom_polygon(data = klang_shp, aes(x = long, y = lat, group = group),
-               colour = "white", fill = NA) +
-  geom_polygon(data = sel_shp2, aes(x = long, y = lat, group = group),
-               colour = "grey50", fill = NA) +
+                       breaks = seq(0, 400, by = 50),
+                       limits = c(0, 400)) + # set fixed legend) +
+  geom_sf(data = basin_sel_shp3, fill = NA, alpha = 0.3, colour = "tan", linewidth = 1) +
+  geom_sf(data = sel_shp2, fill = NA, alpha = 1, colour = "grey60", size = 0.1) +
   theme_void() + 
   theme(legend.title = element_text(size = 11), 
         legend.text = element_text(size = 11)) +
   labs(title="Long-Term Monthly Rainfall Distribution",
-       subtitle = "December") +
-  coord_fixed() +
+       subtitle = mth_name) +
+  coord_sf(xlim=c(100.5, 102), ylim=c(2.5, 3.9)) +
   guides(fill = guide_colorbar(label.position = "right", title.hjust = 0.9, 
                                barwidth = unit(1, "lines"), barheight = unit(10, "lines")))
 
 map_rf_m12
 
+
+# check max min values
+m12_IDW_mask@data@max
+m12_IDW_mask@data@min
+
+
 #print last plot to file
-ggsave(paste0("Klang_rainfall_m12.jpg"), dpi = 300,
+ggsave(paste0(reg_name_short, "_RF_mth", mth_no, ".jpg"), dpi = 300,
        width = 6, height = 5, units = "in")
 
 
@@ -215,7 +396,7 @@ fit_TPS <- fields::Tps( # using {fields}
 )
 y2019_TPS <- interpolate(ras_interp_template, fit_TPS)
 plot(y2019_TPS)
-y2019_TPS_mask <- mask(y2019_TPS, mask = klang_shp)
+y2019_TPS_mask <- mask(y2019_TPS, mask = sel_shp2)
 plot(y2019_TPS_mask)
 
 
@@ -238,13 +419,13 @@ plot(y2019_KRIG)
 
 
 #############################
-# INTERPOLATE FOR ALL DAYS
+# INTERPOLATE FOR ALL MONTHS
 
 ##  Use IDW
 
-# daily rainfall data join stn data
+# monthly rainfall data join stn data
 
-RF_data_stn <- RF_data %>% 
+RF_data_stn <- RF_mth_avg %>% 
   merge(RF_stn, by = "Stn_no")
 
 str(RF_data_stn)
@@ -268,7 +449,10 @@ colnames(df_date) <- "Month"
 
 # produce interpolation raster only (without map)
 
+i = 1
+
 interp_list = list() #for combination
+#interp_list_nn = list() #for combination
 
 for (i in 1:(nrow(df_date))) {
   #i=1
@@ -280,71 +464,150 @@ for (i in 1:(nrow(df_date))) {
   
   # convert to sf
   sf_rf_mth <- st_as_sf(RF_data_mth, coords = c('Long', 'Lat'), crs = 4326)
+
+  
+  ## Nearest Neighbour
+  #fit_NN <- gstat::gstat( # using package {gstat} 
+  #  formula = Depth_mth_avg ~ 1,    # The column  we are interested in
+  #  data = as(sf_rf_mth, "Spatial"), # using {sf} and converting to {sp}, which is expected
+  #  nmax = 10, nmin = 3 # Number of neighboring observations used for the fit
+  #)
+  #mth_NN <- interpolate(ras_interp_template, fit_NN)
+  #mth_NN_mask <- mask(mth_NN, mask = sel_shp2)
+  
   
   
   # Inverse Distance Weighting
   fit_IDW <- gstat::gstat( # The setup here is quite similar to NN
-    formula = mth_Depth ~ 1,
+    formula = Depth_mth_avg ~ 1,
     locations = sf_rf_mth,
     nmax = 10, nmin = 3,
-    set = list(idp = 0.5) # inverse distance power
+    set = list(idp = 2) # inverse distance power
   )
   mth_IDW <- interpolate(ras_interp_template, fit_IDW)
-  mth_IDW_mask <- mask(mth_IDW, mask = klang_shp)
+  mth_IDW_mask <- mask(mth_IDW, mask = sel_shp2)
   #plot(daily_IDW_mask)
   
 
   
   #counter <- counter + 1
   interp_list[[i]] <- mth_IDW_mask
+  #interp_list_nn[[i]] <- mth_NN_mask
   #rainfall_stack[[counter]] <- daily_IDW_mask
   
 }
 
+
+
+
+
+#########################
+
+# CLASSIFIED MAP
+
+
+# check max and min values
+max(RF_mth_avg$Depth_mth_avg)
+min(RF_mth_avg$Depth_mth_avg)
+
+
+## set palette 
+#col_pal <- brewer.pal(n = 11, name = "Spectral")
+col_pal <- brewer.pal(n = 6, name = "YlGnBu")
+#col_brk <- c(0, 50, 100, 150, 200, 250, 300, 400, 500, 550)
+col_brk <- c(0, 50, 100, 150, 200, 250, 300, 350, 400, 550)
+col_brk <- c(0, 100, 200, 300, 400, 500, 550)
+
+up_limit <- max(col_brk)
+low_limit <- min(col_brk)
+
+
+
+## map
+
+#########
+### single map - single month
+
+map_cl_sely <- ggplot() +
+  geom_raster(data = as.data.frame(m12_IDW_mask, xy=TRUE, na.rm = TRUE), 
+              aes(x = x, y = y, fill = var1.pred)) +
+  scale_fill_stepsn(name = "Rainfall (mm)",
+                    #n.breaks = 3, 
+                    colours = col_pal,
+                    breaks = col_brk,
+                    values = rescale(col_brk),
+                    limits = c(low_limit, up_limit)) +
+  #geom_point(data = RF_y2020, aes(x = Long, y = Lat),
+  #           color = 'red', size = 0.5, alpha = 0.5) +
+  geom_sf(data = basin_sel_shp3, fill = NA, alpha = 0.3, colour = "tan", linewidth = 0.1) +
+  geom_sf(data = sel_shp2, fill = NA, alpha = 1, colour = "red3", linewidth = 0.3) +  theme_void() + 
+  theme_void() + 
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(color = "grey30", hjust = 0.5),
+        legend.title = element_text(size = 10), 
+        legend.position = "bottom",
+        legend.text = element_text(size = 6)) +
+  labs(title = paste0(reg_name_full, " Long-Term Average Monthly Rainfall"),
+       subtitle = mth_name) +
+  coord_sf(xlim=c(100.5, 102), ylim=c(2.5, 3.9)) +
+  guides(fill = guide_colorbar(label.position = "bottom", title.hjust = 0.9, 
+                               barwidth = unit(20, "lines"), barheight = unit(0.5, "lines")))
+
+map_cl_sely
+
+#print last plot to file
+ggsave(paste0(reg_name_short, "_RF_mth", mth_no, "_lgc.jpg"), dpi = 300,
+       width = 6, height = 4, units = "in")
+
+
+
+
+#########
 
 # produce maps from interpolation raster
 
 maplist <- list()
 
-#j = 1
+m = 1
 
-for (j in 1:length(interp_list)) {
+for (m in 1:length(interp_list)) {
   
-  sel_mth <- df_date[j,]
-
+  
+  sel_mth <- df_date[m,]
+  sel_pt <- RF_data_stn %>% 
+    filter(Month == sel_mth)
+  
   # plot map
   mth_IDW_map <- ggplot() +
-    geom_raster(data = as.data.frame(interp_list[[j]], xy=TRUE, na.rm = TRUE), 
-                aes(x = x, y = y, fill = var1.pred),
-                show.legend = FALSE) +
-    #scale_fill_gradientn(name = "Rainfall (mm)", 
-    #                     colors = c("#ffffcf", "#6fc4ad", "#1d7eb3", "#1a4998", "purple4"),
-    #                     values = rescale(c(0, 1000, 2000, 3000, 4000)),
-    #                     limits = c(0, 4000)) +
-    scale_fill_distiller(name="Rainfall (mm)", 
-                         palette = "Spectral", direction = 1,
-                         #na.value = "purple",
-                         oob = scales::squish, # squish out of bound values to nearest extreme
-                         breaks = seq(0, 350, by = 50),
-                         limits = c(0, 350)) + # set fixed legend) +
-    geom_polygon(data = klang_shp, aes(x = long, y = lat, group = group),
-                 colour = "white", fill = NA) +
-    geom_polygon(data = sel_shp2, aes(x = long, y = lat, group = group),
-                 colour = "grey50", fill = NA) +
+    geom_raster(data = as.data.frame(interp_list[[m]], xy = TRUE, na.rm = TRUE), 
+                aes(x = x, y = y, fill = var1.pred)) +
+    scale_fill_stepsn(name = "Rainfall (mm)",
+                      #n.breaks = 3, 
+                      colours = col_pal,
+                      breaks = col_brk,
+                      values = rescale(col_brk),
+                      limits = c(low_limit, up_limit)) +
+    geom_sf(data = basin_sel_shp3, fill = NA, alpha = 0.3, colour = "tan", linewidth = 0.2) +
+    geom_sf(data = sel_shp2, fill = NA, alpha = 1, colour = "red3", linewidth = 0.3) +
+    #geom_point(data = sel_pt, aes(x = Long, y = Lat),
+    #           color = 'red', size = 0.5, alpha = 0.5) +
     theme_void() + 
-    theme(plot.title=element_text(size = 14)) +
+    theme(legend.position = "none",
+          plot.title=element_text(size = 11)) +
     labs(title = month.name[sel_mth]) +
-    coord_fixed()
+    coord_sf(xlim = c(100.5, 102), ylim = c(2.5, 3.9))
   
   
   #counter <- counter + 1
-  maplist[[j]] <- mth_IDW_map
+  maplist[[m]] <- mth_IDW_map
   #rainfall_stack[[counter]] <- daily_IDW_mask
   
 }
 
 
-# facet mapping
+
+#################
+# FACET MAP
 
 library(gridExtra)
 
@@ -357,7 +620,7 @@ g_legend<-function(a.gplot){
   legend <- tmp$grobs[[leg]]
   return(legend)}
 
-mylegend <- g_legend(map_rf_m12)
+mylegend <- g_legend(map_cl_sely)
 
 
 ### arrange layout
@@ -365,12 +628,12 @@ mylegend <- g_legend(map_rf_m12)
 facet_map <- grid.arrange(grobs = maplist, ncol = 4)
 
 #### title font format
-title = grid::textGrob('Klang Basin Long-Term Monthly Rainfall\n', 
+title = grid::textGrob(paste0(reg_name_full, " Long-Term Average Monthly Rainfall (", yr_min, "-", yr_max,")\n"), 
                        gp = grid::gpar(fontsize = 16))
 
 facet_legend_map <- grid.arrange(facet_map, mylegend, 
                                  top = title,
-                                 ncol = 2, widths = c(9, 1))
+                                 nrow = 2, heights = c(9, 1))
 
 
 # multiple maps with single particular map
@@ -378,133 +641,15 @@ facet_legend_map <- grid.arrange(facet_map, mylegend,
 
 
 ### print last plot to file
-ggsave(paste0("Klang_rainfall_ltmth2.jpg"), facet_legend_map, dpi = 400,
-       width = 17, height = 10, units = "in")
+ 
+## widescreen
+ggsave(paste0(reg_name_short, "_RF_ltmth_lgc.jpg"), facet_legend_map_cl, dpi = 400,
+       width = 20, height = 11.25, units = "in")
 
-
-#########################
-
-# CLASSIFIED MAP
-
-
-## set palette 
-#col_pal <- brewer.pal(n = 8, name = "Spectral")
-col_pal <- brewer.pal(n = 9, name = "YlGnBu")
-col_brk <- c(0, 50, 100, 150, 200, 250, 300, 350, 400, 450)
-
-up_limit <- max(col_brk)
-low_limit <- min(col_brk)
-
-
-## map
-
-### single map
-
-map_cl_m12 <- ggplot() +
-  geom_raster(data = as.data.frame(m12_IDW_mask, xy=TRUE, na.rm = TRUE), 
-              aes(x = x, y = y, fill = var1.pred)) +
-  scale_fill_stepsn(name = "Rainfall (mm)",
-                    #n.breaks = 3, 
-                    colours = col_pal,
-                    breaks = col_brk,
-                    values = rescale(col_brk),
-                    limits = c(low_limit, up_limit)) +
-  #geom_polygon(data = basin_shp2, aes(x = long, y = lat, group = group),
-  #             colour = "white", fill = NA) +
-  geom_polygon(data = sel_shp2, aes(x = long, y = lat, group = group),
-               colour = "grey60", size = 0.1, fill = NA) +
-  #geom_point(data = RF_y2020, aes(x = Long, y = Lat),
-  #           color = 'red', size = 0.5, alpha = 0.5) +
-  theme_void() + 
-  theme(plot.title = element_text(hjust = 0.5),
-        plot.subtitle = element_text(color = "grey30", hjust = 0.5),
-        legend.title = element_text(size = 10), 
-        legend.position = "bottom",
-        legend.text = element_text(size = 6)) +
-  labs(title = paste0("Klang Basin Long-Term Average Monthly Rainfall"),
-       subtitle = "December") +
-  coord_fixed() +
-  guides(fill = guide_colorbar(label.position = "bottom", title.hjust = 0.9, 
-                               barwidth = unit(20, "lines"), barheight = unit(0.5, "lines")))
-
-map_cl_m12
-
-#print last plot to file
-ggsave(paste0("Klang_RF_m12_lgc2.jpg"), dpi = 300,
-       width = 6, height = 4, units = "in")
-
-
-### produce multiple maps from interpolation raster
-
-maplist_cl <- list()
-
-m = 1
-
-for (m in 1:length(interp_list)) {
-  
-  sel_mth <- df_date[m,]
-  sel_pt <- RF_data_stn %>% 
-    filter(Month == sel_mth)
-  
-  # plot map
-  mth_IDW_map_cl <- ggplot() +
-    geom_raster(data = as.data.frame(interp_list[[m]], xy=TRUE, na.rm = TRUE), 
-                aes(x = x, y = y, fill = var1.pred)) +
-    scale_fill_stepsn(name = "Rainfall (mm)",
-                      #n.breaks = 3, 
-                      colours = col_pal,
-                      breaks = col_brk,
-                      values = rescale(col_brk),
-                      limits = c(low_limit, up_limit)) +
-    #geom_polygon(data = basin_shp2, aes(x = long, y = lat, group = group),
-    #             colour = "white", fill = NA) +
-    geom_polygon(data = sel_shp2, aes(x = long, y = lat, group = group),
-                 colour = "grey20", size = 0.1, fill = NA) +
-    #geom_point(data = sel_pt, aes(x = Long, y = Lat),
-    #           color = 'red', size = 0.5, alpha = 0.5) +
-    theme_void() + 
-    theme(legend.position = "none",
-          plot.title=element_text(size = 11)) +
-    labs(title = month.name[sel_mth]) +
-    coord_fixed()
-  
-  
-  #counter <- counter + 1
-  maplist_cl[[m]] <- mth_IDW_map_cl
-  #rainfall_stack[[counter]] <- daily_IDW_mask
-  
-}
-
-
-
-### facet map
-
-mylegend_cl <- g_legend(map_cl_m12)
-
-
-# arrange layout
-
-facet_map_cl <- grid.arrange(grobs = maplist_cl[1:12], ncol = 4)
-
-#### title font format
-title2 = grid::textGrob(paste0('Klang Basin Long-Term Average Monthly Rainfall\n'), 
-                        gp = grid::gpar(fontsize = 14))
-
-facet_legend_map_cl <- grid.arrange(facet_map_cl, mylegend_cl, 
-                                    top = title2, 
-                                    nrow = 2, heights = c(9, 1)
-                                    #ncol = 2, widths = c(9, 1)
-)
-
-
-
-
-#print last plot to file
-ggsave(paste0("Klang_RF_ltmth_lgc2.jpg"), facet_legend_map_cl, dpi = 400,
-       width = 17, height = 10, units = "in")
-
-
-
+## A3
+ggsave(paste0(reg_name_short, "_RF_ltmth_lgc_a3.jpg"), facet_legend_map_cl, dpi = 400,
+       width = 20, height = 14.19, units = "in")
+	   
 
 #########################
 
